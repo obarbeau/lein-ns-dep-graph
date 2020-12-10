@@ -14,11 +14,12 @@
 
 (defn- hash-user-arguments [args options]
   (try (apply hash-map args)
-  (catch Exception e (do (println "WARNING: Optional argument missing a corresponding value. Defaulting."))
-                          options)))
+       (catch Exception e (do (println "WARNING: Optional argument missing a corresponding value. Defaulting."))
+              options)))
 
 (defn- build-arguments [args]
-  (let [options {"-name"     "ns-dep-graph"
+  (let [options {"-exclude" ""
+                 "-name"     "ns-dep-graph"
                  "-platform" ":clj"
                  "-parents"  "[]"}
         hashed-args (hash-user-arguments args options)
@@ -40,6 +41,7 @@
                                  (project :source-paths)))
         tracker (ns-file/add-files {} source-files)
         dep-graph (tracker ::ns-track/deps)
+        ;_ (println (map ns-file/read-file-ns-decl source-files))
         ns-names (set (map (comp second ns-file/read-file-ns-decl)
                            source-files))
         part-of-project? (partial contains? ns-names)
@@ -47,18 +49,24 @@
         part-of-parents?  #(or (empty? ns-parents)
                                (contains? ns-parents %)
                                (boolean (seq (set/intersection ns-parents (ns-dep/transitive-dependents dep-graph %)))))
+        ; pas de edn/read-string ici sinon on perd les escaped chars.
+        exclude  (get built-args "-exclude")
+        regex-exclude? #(if exclude
+                          (not (re-matches (re-pattern (str exclude)) (str %)))
+                          true)
         nodes (->> (ns-dep/nodes dep-graph)
                    (filter part-of-project?)
-                   (filter part-of-parents?))]
-      (loop [name file-name
-             counter 1]
-          (if (.exists (io/file (add-image-extension name)))
-              (recur (str file-name counter) (inc counter))
-              (viz/save-graph
-               nodes
-               #(filter part-of-project? (ns-dep/immediate-dependencies dep-graph %))
-               :node->descriptor (fn [x] {:label x})
-               :options {:dpi 72}
-               :filename (add-image-extension name))))))
+                   (filter part-of-parents?)
+                   (filter regex-exclude?))]
+    (loop [name file-name
+           counter 1]
+      (if (.exists (io/file (add-image-extension name)))
+        (recur (str file-name counter) (inc counter))
+        (viz/save-graph
+         nodes
+         #(filter part-of-project? (ns-dep/immediate-dependencies dep-graph %))
+         :node->descriptor (fn [x] {:label x})
+         :options {:dpi 72}
+         :filename (add-image-extension name))))))
 
 ;; TODO: maybe add option to show dependencies on external namespaces as well.
